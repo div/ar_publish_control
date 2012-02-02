@@ -99,13 +99,13 @@ module ArPublishControl
         return if self.included_modules.include?(ArPublishControl::Publishable::InstanceMethods)
         send :include, ArPublishControl::Publishable::InstanceMethods
         
-        named_scope :published, lambda{{:conditions => published_conditions}}
-        named_scope :unpublished, lambda{{:conditions => unpublished_conditions}}
-        named_scope :upcoming, lambda{{:conditions => upcoming_conditions}}
-        named_scope :expired, lambda {{:conditions => expired_conditions}}
-        named_scope :draft, :conditions => {:is_published => false}
+        scope :published, lambda{{:conditions => published_conditions}}
+        scope :unpublished, lambda{{:conditions => unpublished_conditions}}
+        scope :upcoming, lambda{{:conditions => upcoming_conditions}}
+        scope :expired, lambda {{:conditions => expired_conditions}}
+        scope :draft, :conditions => {:is_published => false}
         
-        named_scope :published_only, lambda {|*args|
+        scope :published_only, lambda {|*args|
           bool = (args.first.nil? ? true : (args.first)) # nil = true by default
           bool ? {:conditions => published_conditions} : {}
         }
@@ -131,24 +131,24 @@ module ArPublishControl
       # returns a string for use in SQL to filter the query to unpublished results only
       # Meant for internal use only
       def unpublished_conditions
-        t = Time.now
+        t = Time.zone.now
         ["(#{table_name}.is_published = ? OR #{table_name}.publish_at > ?) OR (#{table_name}.unpublish_at IS NOT NULL AND #{table_name}.unpublish_at < ?)",false,t,t]
       end
       
       # return a string for use in SQL to filter the query to published results only
       # Meant for internal use only
       def published_conditions
-        t = Time.now
+        t = Time.zone.now
         ["(#{table_name}.is_published = ? AND #{table_name}.publish_at <= ?) AND (#{table_name}.unpublish_at IS NULL OR #{table_name}.unpublish_at > ?)",true,t,t]
       end
       
       def upcoming_conditions
-        t = Time.now
+        t = Time.zone.now
         ["(#{table_name}.is_published = ? AND #{table_name}.publish_at > ?)",true,t]
       end
       
       def expired_conditions
-        t = Time.now
+        t = Time.zone.now
         ["(#{table_name}.unpublish_at IS NOT NULL AND #{table_name}.unpublish_at < ?)",t]
       end
     end
@@ -156,7 +156,7 @@ module ArPublishControl
     module InstanceMethods
       
       def after_initialize
-        write_attribute(:publish_at, Time.now) if publish_at.nil?
+        write_attribute(:publish_at, Time.zone.now) if publish_at.nil?
       end
       
       # ActiveRecrod callback fired on +before_create+ to make 
@@ -178,22 +178,22 @@ module ArPublishControl
       
       # Return whether the current object is published or not
       def published?
-        (is_published? && (publish_at <=> Time.now) <= 0) && (unpublish_at.nil? || (unpublish_at <=> Time.now) >= 0)
+        (is_published? && (publish_at <=> Time.zone.now) <= 0) && (unpublish_at.nil? || (unpublish_at <=> Time.zone.now) >= 0)
       end
       
       def upcoming?
-        (is_published? && publish_at > Time.now)
+        (is_published? && publish_at > Time.zone.now)
       end
       
       def expired?
-        (!unpublish_at.nil? && unpublish_at < Time.now)
+        (!unpublish_at.nil? && unpublish_at < Time.zone.now)
       end
       
       # Indefinitely publish the current object right now
       def publish
         return if published?
         self.is_published = true
-        self.publish_at = Time.now
+        self.publish_at = Time.zone.now
         self.unpublish_at = nil
       end
       
