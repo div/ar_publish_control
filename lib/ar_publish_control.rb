@@ -193,7 +193,7 @@ module ArPublishControl
       def publish
         return if published?
         self.is_published = true
-        self.publish_at = Time.zone.now
+        self.publish_at = Time.zone.now if self.publish_at.nil?
         self.unpublish_at = nil
       end
       
@@ -214,6 +214,19 @@ module ArPublishControl
       # Raises an error when saving files.
       def unpublish!
         unpublish
+        save!
+      end
+      
+      def toggle_publish
+        if published? || upcoming? 
+          unpublish
+        else
+          publish
+        end
+      end
+
+      def toggle_publish!
+        toggle_publish
         save!
       end
       
