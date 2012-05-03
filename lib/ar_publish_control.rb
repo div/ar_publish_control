@@ -2,7 +2,7 @@ $:.unshift(File.dirname(__FILE__)) unless
   $:.include?(File.dirname(__FILE__)) || $:.include?(File.expand_path(File.dirname(__FILE__)))
 
 module ArPublishControl
-  VERSION = '0.0.9'
+  VERSION = '0.0.3'
   # This is a gem version of http://github.com/avdgaag/acts_as_publishable ( a Rails plugin)
   # Thanks to Avdaag for his awesome, super readable code which I ripped off for this gem.
   #
@@ -28,7 +28,7 @@ module ArPublishControl
   #   post.unpublish!
   #   post.published? # => false
   #   
-  # You can use two named_scopes to find the published or unpublished objects.
+  # You can use two scopes to find the published or unpublished objects.
   # You can chain them with other scopes and use them on association collections:
   #   
   #   Post.all.count          # => 15
@@ -42,7 +42,7 @@ module ArPublishControl
   #  Klass.unpublished includes all objects which is_published flag is set to false and/or are expired or upcoming.
   #  If you specifically want those where is_published == false regardless of dates, use Klass.draft
   # 
-  # There's a third named_scope that you can pass a boolean in order to find only published items or all of them
+  # There's a third scope that you can pass a boolean in order to find only published items or all of them
   # This is useful in controller for permission-based publish control
   #
   #   @post       = Post.published.find(params[:id])
@@ -56,63 +56,134 @@ module ArPublishControl
   
     def self.included(base) #:nodoc:
       base.extend ClassMethods
+      base.class_attribute :publish_scopes
+      base.class_attribute :after_publish_handlers
+      base.class_attribute :after_unpublish_handlers
+
     end
   
     module ClassMethods
-      # == Configuration options
-      #
-      # Right now this plugin has only one configuration option. Models with no publication dates
-      # are by default published, not unpublished. If you want to hide your model when it has no
-      # explicit publication date set, you can turn off this behaviour with the
-      # +publish_by_default+ (defaults to <tt>true</tt>) option like so:
-      #
-      #   class Post < ActiveRecord::Base
-      #     publish_control :publish_by_default => false
-      #   end
-      #
-      # == Database Schema
-      #
-      # The model that you're publishing needs to have two special date attributes:
-      # 
-      # * publish_at
-      # * unpublish_at
-      # 
-      # These attributes have no further requirements or required validations; they
-      # just need to be <tt>datetime</tt>-columns.
-      # 
-      # You can use a migration like this to add these columns to your model:
-      #
-      #   class AddPublicationDatesToPosts < ActiveRecord::Migration
-      #     def self.up
-      #       add_column :posts, :publish_at, :datetime
-      #       add_column :posts, :unpublish_at, :datetime
-      #     end
-      #   
-      #     def self.down
-      #       remove_column :posts, :publish_at
-      #       remove_column :posts, :unpublish_at
-      #     end
-      #   end
-      # 
-      def publish_control(options = { :publish_by_default => true })
+
+  #     # == Configuration options
+  #     #
+  #     # Right now this plugin has only one configuration option. Models with no publication dates
+  #     # are by default published, not unpublished. If you want to hide your model when it has no
+  #     # explicit publication date set, you can turn off this behaviour with the
+  #     # +publish_by_default+ (defaults to <tt>true</tt>) option like so:
+  #     #
+  #     #   class Post < ActiveRecord::Base
+  #     #     publish_control :publish_by_default => false
+  #     #   end
+  #     #
+  #     # == Database Schema
+  #     #
+  #     # The model that you're publishing needs to have two special date attributes:
+  #     # 
+  #     # * publish_at
+  #     # * unpublish_at
+  #     # 
+  #     # These attributes have no further requirements or required validations; they
+  #     # just need to be <tt>datetime</tt>-columns.
+  #     # 
+  #     # You can use a migration like this to add these columns to your model:
+  #     #
+  #     #   class AddPublicationDatesToPosts < ActiveRecord::Migration
+  #     #     def self.up
+  #     #       add_column :posts, :publish_at, :datetime
+  #     #       add_column :posts, :unpublish_at, :datetime
+  #     #     end
+  #     #   
+  #     #     def self.down
+  #     #       remove_column :posts, :publish_at
+  #     #       remove_column :posts, :unpublish_at
+  #     #     end
+  #     #   end
+  #     # 
+  #     #@@publish_scopes = []
+  # 
+
+      def publish_scopes
+        #read_inheritable_attribute :publish_scopes
+        
+        self.publish_scopes
+      end
+      
+      def after_publish(method)
+        #write_inheritable_attribute(:after_publish_handlers, read_inheritable_attribute(:after_publish_handlers).push(method))
+        
+        self.after_publish_handlers = self.after_publish_handlers.push(method)
+      end
+      
+      def after_unpublish(method)
+        
+        self.after_unpublish_handlers = self.after_unpublish_handlers.push(method)
+        #write_inheritable_attribute(:after_unpublish_handlers, read_inheritable_attribute(:after_unpublish_handlers).push(method))
+      end
+      
+      def publish_control(options = {})
         # don't allow multiple calls
         return if self.included_modules.include?(ArPublishControl::Publishable::InstanceMethods)
+        self.publish_scopes = options[:scopes] || []
+        self.after_publish_handlers = []
+        self.after_unpublish_handlers = []
+        # write_inheritable_attribute(:publish_scopes, options[:scopes] || [])
+        # write_inheritable_attribute(:after_publish_handlers, [])
+        # write_inheritable_attribute(:after_unpublish_handlers, [])
+
+        publish_scopes.each do |scope|
+          send :class_eval, %Q{
+            def #{scope}_published?
+              is_#{scope}_published?
+            end
+        
+            def #{scope}_publish
+              return if #{scope}_published?
+              self.is_#{scope}_published = true
+              self.publish_at = Time.zone.now
+              self.unpublish_at = nil
+              self.do_after_publish if self.published?
+            end
+        
+            def #{scope}_publish!
+              #{scope}_publish
+              save!
+            end
+        
+            def #{scope}_unpublish
+              self.is_#{scope}_published = false
+            end
+        
+            def #{scope}_unpublish!
+              #{scope}_unpublish
+              save!
+            end
+          }
+        end        
+  
+        publish_by_default = options[:publish_by_default] || true
+        
+  
         send :include, ArPublishControl::Publishable::InstanceMethods
         
         scope :published, lambda{{:conditions => published_conditions}}
         scope :unpublished, lambda{{:conditions => unpublished_conditions}}
         scope :upcoming, lambda{{:conditions => upcoming_conditions}}
         scope :expired, lambda {{:conditions => expired_conditions}}
-        scope :draft, :conditions => {:is_published => false}
-        
+    
         scope :published_only, lambda {|*args|
           bool = (args.first.nil? ? true : (args.first)) # nil = true by default
           bool ? {:conditions => published_conditions} : {}
         }
+
+        scope "scoped_published", lambda{|scope|{:conditions => scoped_published_conditions(scope)}}
+        scope "scoped_unpublished", lambda{|scope|{:conditions => scoped_unpublished_conditions(scope)}}
+        scope "scoped_upcoming", lambda{|scope|{:conditions => scoped_upcoming_conditions(scope)}}
+        scope "scoped_expired", lambda {|scope|{:conditions => scoped_expired_conditions(scope)}}
+
         
         validate :validate_publish_date_consistency
         before_create :publish_by_default if options[:publish_by_default]
-      end
+     end
       
       # Takes a block whose containing SQL queries are limited to
       # published objects. You can pass a boolean flag indicating
@@ -126,31 +197,58 @@ module ArPublishControl
       #   @post.comments.published_only(!logged_in?)
       # 
       
-      protected
-
+  
       # returns a string for use in SQL to filter the query to unpublished results only
       # Meant for internal use only
       def unpublished_conditions
         t = Time.zone.now
-        ["(#{table_name}.is_published = ? OR #{table_name}.publish_at > ?) OR (#{table_name}.unpublish_at IS NOT NULL AND #{table_name}.unpublish_at < ?)",false,t,t]
+        unpld_conds = if publish_scopes.empty?
+          "#{table_name}.is_published = false"
+        else
+          '(' + publish_scopes.collect{|s| "#{table_name}.is_#{s}_published = false" }.join(' OR ') + ')'
+        end
+        ["(#{unpld_conds} OR #{table_name}.publish_at > ?) OR (#{table_name}.unpublish_at IS NOT NULL AND #{table_name}.unpublish_at < ?)",t,t]
+      end
+      
+      def scoped_unpublished_conditions(scope)
+        t = Time.zone.now
+        ["(#{table_name}.is_#{scope}_published = false OR #{table_name}.publish_at > ?) OR (#{table_name}.unpublish_at IS NOT NULL AND #{table_name}.unpublish_at < ?)",t,t]
+      end
+
+      def is_published_conditions
+        pld_conds = if publish_scopes.empty?
+          "#{table_name}.is_published = true"
+        else
+          '(' + publish_scopes.collect{|s| "#{table_name}.is_#{s}_published = true" }.join(' AND ') + ')'
+        end
       end
       
       # return a string for use in SQL to filter the query to published results only
       # Meant for internal use only
-      def published_conditions
+      def published_conditions(scope = nil)
         t = Time.zone.now
-        ["(#{table_name}.is_published = ? AND #{table_name}.publish_at <= ?) AND (#{table_name}.unpublish_at IS NULL OR #{table_name}.unpublish_at > ?)",true,t,t]
+        ["(#{is_published_conditions} AND #{table_name}.publish_at <= ?) AND (#{table_name}.unpublish_at IS NULL OR #{table_name}.unpublish_at > ?)",t,t]
       end
       
-      def upcoming_conditions
+      def scoped_published_conditions(scope)
         t = Time.zone.now
-        ["(#{table_name}.is_published = ? AND #{table_name}.publish_at > ?)",true,t]
+        ["(#{table_name}.is_#{scope}_published = true AND #{table_name}.publish_at <= ?) AND (#{table_name}.unpublish_at IS NULL OR #{table_name}.unpublish_at > ?)",t,t]
+      end
+
+      def upcoming_conditions(scope = nil)
+        t = Time.zone.now
+        ["(#{is_published_conditions} AND #{table_name}.publish_at > ?)",true,t]
       end
       
-      def expired_conditions
+      def scoped_upcoming_conditions(scope)
         t = Time.zone.now
+        ["(#{table_name}.is_#{scope}_published = true AND #{table_name}.publish_at > ?)",true,t]
+      end
+
+      def expired_conditions(scope = nil)
         ["(#{table_name}.unpublish_at IS NOT NULL AND #{table_name}.unpublish_at < ?)",t]
       end
+
     end
     
     module InstanceMethods
@@ -159,11 +257,29 @@ module ArPublishControl
         write_attribute(:publish_at, Time.zone.now) if publish_at.nil?
       end
       
+      def do_after_publish
+        self.class.after_publish_handlers.each do |h|
+          self.send h
+        end
+      end
+      
+      def do_after_unpublish
+          self.class.after_unpublish_handlers.each do |h|
+          self.send h
+        end
+      end
+
       # ActiveRecrod callback fired on +before_create+ to make 
       # sure a new object always gets a publication date; if 
       # none is supplied it defaults to the creation date.
       def publish_by_default
-        write_attribute(:is_published, true) if is_published.nil?
+        if self.class.publish_scopes.empty?
+          write_attribute(:is_published, true) if is_published.nil?
+        else
+          self.class.publish_scopes.each do |scope|
+            write_attribute("is_#{scope}_published", true) if self.read_attribute("is_#{scope}_published").nil?
+          end
+        end
       end
       
       # Validate that unpublish_at is greater than publish_at
@@ -174,15 +290,39 @@ module ArPublishControl
         end
       end
       
+      def check_for_all_scopes(method_name)
+        res = true
+        self.class.publish_scopes.each do |scope|
+            res &= send "#{scope}_#{method_name}"
+        end
+        res
+      end
+      
+      def do_for_all_scopes(method_name)
+        self.class.publish_scopes.each do |scope|
+          send "#{scope}_#{method_name}"
+        end
+      end
     public
       
       # Return whether the current object is published or not
-      def published?
-        (is_published? && (publish_at <=> Time.zone.now) <= 0) && (unpublish_at.nil? || (unpublish_at <=> Time.zone.now) >= 0)
+      def published?(scope = nil)
+        return send "#{scope}_published?" if scope
+        p = if self.class.publish_scopes.empty?
+          is_published?
+        else
+          check_for_all_scopes('published?')
+        end
+        (p && (publish_at <=> Time.zone.now) <= 0) && (unpublish_at.nil? || (unpublish_at <=> Time.zone.now) >= 0)
       end
       
       def upcoming?
-        (is_published? && publish_at > Time.zone.now)
+        p = if self.class.publish_scopes.empty?
+          is_published?
+        else
+          check_for_all_scopes('published?')
+        end
+        (p && publish_at > Time.zone.now)
       end
       
       def expired?
@@ -190,44 +330,58 @@ module ArPublishControl
       end
       
       # Indefinitely publish the current object right now
-      def publish
-        return if published?
-        self.is_published = true
-        self.publish_at = Time.zone.now if self.publish_at.nil?
-        self.unpublish_at = nil
+      def publish(scope = nil)
+	      return send "#{scope}_publish" if scope
+        if self.class.publish_scopes.empty?
+          return if published?
+          self.is_published = true
+          self.publish_at = Time.zone.now if self.publish_at.nil?
+          self.unpublish_at = nil
+          self.do_after_publish
+        else
+          do_for_all_scopes :publish
+        end
       end
       
       # Same as publish, but immediatly saves the object.
       # Raises an error when saving fails.
-      def publish!
+      def publish!(scope = nil)
+        return send "#{scope}_publish!" if scope
         publish
         save!
       end
       
       # Immediatly unpublish the current object
-      def unpublish
-        return unless published?
-        self.is_published = false
+      def unpublish(scope = nil)
+        return send "#{scope}_unpublish" if scope
+        if self.class.publish_scopes.empty?
+          self.is_published = false
+          self.publish_at = nil
+        else
+          do_for_all_scopes :unpublish
+        end
+        self.do_after_unpublish
       end
       
       # Same as unpublish, but immediatly saves the object.
       # Raises an error when saving files.
-      def unpublish!
+      def unpublish!(scope = nil)
+        return send "#{scope}_unpublish!" if scope
         unpublish
         save!
       end
       
-      def toggle_publish
-        if published? || upcoming? 
-          unpublish
+      def toggle_publish(scope = nil)
+        if published?(scope) || upcoming? 
+          unpublish(scope)
         else
-          publish
+          publish(scope)
         end
       end
 
-      def toggle_publish!
-        toggle_publish
-        save!
+      def toggle_publish!(scope = nil)
+        toggle_publish(scope)
+        save
       end
       
     end
@@ -236,7 +390,6 @@ module ArPublishControl
   
 end
 
-require 'rubygems'
 require 'active_record'
 
 ActiveRecord::Base.send :include, ArPublishControl::Publishable
