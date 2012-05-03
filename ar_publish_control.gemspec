@@ -2,11 +2,11 @@
 
 Gem::Specification.new do |s|
   s.name = %q{ar_publish_control}
-  s.version = "0.0.9"
+  s.version = "0.0.10"
 
   s.required_rubygems_version = Gem::Requirement.new(">= 0") if s.respond_to? :required_rubygems_version=
   s.authors = ["Ismael Celis"]
-  s.date = %q{2008-11-18}
+  s.date = %q{2012-05-03}
   s.description = %q{Publish control for ActiveRecord}
   s.email = ["ismaelct@gmail.com"]
   s.extra_rdoc_files = ["History.txt", "Manifest.txt", "PostInstall.txt", "README.rdoc"]

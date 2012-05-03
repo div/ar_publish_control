@@ -2,7 +2,7 @@ $:.unshift(File.dirname(__FILE__)) unless
   $:.include?(File.dirname(__FILE__)) || $:.include?(File.expand_path(File.dirname(__FILE__)))
 
 module ArPublishControl
-  VERSION = '0.0.9'
+  VERSION = '0.0.10'
   # This is a gem version of http://github.com/avdgaag/acts_as_publishable ( a Rails plugin)
   # Thanks to Avdaag for his awesome, super readable code which I ripped off for this gem.
   #
@@ -56,6 +56,8 @@ module ArPublishControl
   
     def self.included(base) #:nodoc:
       base.extend ClassMethods
+      base.class_attribute :after_publish_handlers
+      base.class_attribute :after_unpublish_handlers
     end
   
     module ClassMethods
@@ -99,6 +101,9 @@ module ArPublishControl
         return if self.included_modules.include?(ArPublishControl::Publishable::InstanceMethods)
         send :include, ArPublishControl::Publishable::InstanceMethods
         
+        self.after_publish_handlers = []
+        self.after_unpublish_handlers = []
+        
         scope :published, lambda{{:conditions => published_conditions}}
         scope :unpublished, lambda{{:conditions => unpublished_conditions}}
         scope :upcoming, lambda{{:conditions => upcoming_conditions}}
@@ -112,6 +117,14 @@ module ArPublishControl
         
         validate :validate_publish_date_consistency
         before_create :publish_by_default if options[:publish_by_default]
+      end
+      
+      def after_publish(method)        
+        self.after_publish_handlers = self.after_publish_handlers.push(method)
+      end
+      
+      def after_unpublish(method)        
+        self.after_unpublish_handlers = self.after_unpublish_handlers.push(method)
       end
       
       # Takes a block whose containing SQL queries are limited to
@@ -159,6 +172,18 @@ module ArPublishControl
         write_attribute(:publish_at, Time.zone.now) if publish_at.nil?
       end
       
+      def do_after_publish
+        self.class.after_publish_handlers.each do |h|
+          self.send h
+        end
+      end
+      
+      def do_after_unpublish
+          self.class.after_unpublish_handlers.each do |h|
+          self.send h
+        end
+      end
+      
       # ActiveRecrod callback fired on +before_create+ to make 
       # sure a new object always gets a publication date; if 
       # none is supplied it defaults to the creation date.
@@ -195,6 +220,7 @@ module ArPublishControl
         self.is_published = true
         self.publish_at = Time.zone.now if self.publish_at.nil?
         self.unpublish_at = nil
+        self.do_after_publish
       end
       
       # Same as publish, but immediatly saves the object.
@@ -208,6 +234,7 @@ module ArPublishControl
       def unpublish
         return unless published?
         self.is_published = false
+        self.do_after_unpublish
       end
       
       # Same as unpublish, but immediatly saves the object.
@@ -240,3 +267,6 @@ require 'rubygems'
 require 'active_record'
 
 ActiveRecord::Base.send :include, ArPublishControl::Publishable
+
+
+
